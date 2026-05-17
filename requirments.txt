@@ -1,0 +1,9 @@
+osmium
+dotenv
+numpy
+mapsnap
+pandas
+requests
+torch
+pillow
+torchvision
