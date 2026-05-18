@@ -5,30 +5,27 @@ import requests
 import dotenv
 dotenv.load_dotenv()
 # Load the new master dataset
-df = pd.read_csv("master_candidates.csv")
+try:
+    df = pd.read_csv("master_candidates.csv")
+    df = df.sample(frac=1, random_state=47).reset_index(drop=True)
+except FileNotFoundError:
+    pass
 
-# CHOPPER TRICK: Shuffle the entire dataframe randomly.
-# This ensures you get a beautiful geographic mix from all over the UK instantly,
-# so you don't need to manually calculate skips anymore.
-df = df.sample(frac=1, random_state=42).reset_index(drop=True)
-
-# Define exactly how many of each spot type you want in your final training batch.
-# You can tweak these limits to get the exact balance you want!
 target_limits = {
     "Walkable Bridge": 400,
-    "Abandoned Industrial": 400,
-    "Historic Ruins": 150,
-    "Terrain": 150,  # Catches cliffs, ridges, rock formations
-    "Mountain Peak": 100,
+    "Abandoned Industrial": 0,
+    "Historic Ruins": 0,
+    "Terrain": 0,  # Catches cliffs, ridges, rock formations
+    "Mountain Peak": 0,
     "Skatepark / BMX Track": 50,
     "Water Pier": 50,
-    "Military Bunker": 50,
+    "Military Bunker": 0,
     "Tower": 50  # Catches chimneys, water towers, silos
 }
 
 # Custom zoom levels for each type (Lower number = wider view)
 category_zooms = {
-    "Walkable Bridge": 18,         # Tight close-up
+    "Walkable Bridge": 17,         # Tight close-up
     "Abandoned Industrial": 18,    # Tight close-up
     "Historic Ruins": 17,          # Medium view to see the layout
     "Terrain": 16,                 # Zoomed out to see cliff faces and shadows
@@ -43,67 +40,71 @@ category_zooms = {
 download_counts = {k: 0 for k in target_limits.keys()}
 
 APPLE_MAPS_TOKEN = os.getenv("APPLE_MAPS_TOKEN")
-os.makedirs("dataset/images", exist_ok=True)
 
-print("Starting balanced download pipeline...")
 
-for index, row in df.iterrows():
-    spot_id = row['id']
-    row_type = row['type']
-    lat = row['lat']
-    lon = row['lon']
+if __name__ == "__main__":
+    os.makedirs("dataset/images", exist_ok=True)
 
-    # Figure out which target bucket this row fits into using partial string matching
-    # (This handles dynamic names like 'Mountain Peak (Ben Nevis)')
-    matched_category = None
-    for category in target_limits.keys():
-        if row_type.startswith(category):
-            matched_category = category
-            break
+    print("Starting balanced download pipeline...")
 
-    # If the spot doesn't match any of our defined categories, skip it
-    if not matched_category:
-        continue
+    for index, row in df.iterrows():
+        spot_id = row['id']
+        row_type = row['type']
+        lat = row['lat']
+        lon = row['lon']
 
-    # If we have already hit our target limit for this specific category, skip it
-    if download_counts[matched_category] >= target_limits[matched_category]:
-        continue
+        # Figure out which target bucket this row fits into using partial string matching
+        # (This handles dynamic names like 'Mountain Peak (Ben Nevis)')
+        matched_category = None
+        for category in target_limits.keys():
+            if row_type.startswith(category):
+                matched_category = category
+                break
 
-    # --- API Request Setup ---
-    url = "https://snapshot.apple-mapkit.com/api/v1/snapshot"
-    chosen_zoom = category_zooms.get(matched_category, 18)
+        # If the spot doesn't match any of our defined categories, skip it
+        if not matched_category:
+            continue
 
-    params = {
-        "center": f"{lat},{lon}",
-        "z": chosen_zoom,  # Uses the dynamic zoom level
-        "size": "600x600",  # Generates a much bigger, clearer image for your eyes
-        "scale": 2,  # Keeps it high-res for Retina displays
-        "t": "satellite",
-        "token": APPLE_MAPS_TOKEN
-    }
+        # If we have already hit our target limit for this specific category, skip it
+        if download_counts[matched_category] >= target_limits[matched_category]:
+            continue
 
-    try:
-        response = requests.get(url, params=params)
+        # --- API Request Setup ---
+        url = "https://snapshot.apple-mapkit.com/api/v1/snapshot"
+        chosen_zoom = category_zooms.get(matched_category, 18)
 
-        if response.status_code == 200:
-            # We save it with the raw ID first. You'll add the _SCALE_FLOW part during labeling!
-            image_path = f"dataset/images/spot_{spot_id}.png"
-            with open(image_path, "wb") as f:
-                f.write(response.content)
+        params = {
+            "center": f"{lat},{lon}",
+            "z": chosen_zoom,  # Uses the dynamic zoom level
+            "size": "600x600",  # Generates a much bigger, clearer image for your eyes
+            "scale": 2,  # Keeps it high-res for Retina displays
+            "t": "satellite",
+            "token": APPLE_MAPS_TOKEN
+        }
 
-            # Increment the counter for this specific type
-            download_counts[matched_category] += 1
-            print(
-                f"Downloaded {matched_category} ({download_counts[matched_category]}/{target_limits[matched_category]})")
-        else:
-            print(f"API Error on spot {spot_id}: Status {response.status_code}")
+        try:
+            response = requests.get(url, params=params)
 
-        time.sleep(0.4)
+            if response.status_code == 200:
+                # We save it with the raw ID first. You'll add the _SCALE_FLOW part during labeling!
+                image_path = f"dataset/images/spot_{spot_id}.png"
+                with open(image_path, "wb") as f:
+                    f.write(response.content)
 
-    except Exception as e:
-        print(f"Network Error on spot {spot_id}: {e}")
+                # Increment the counter for this specific type
+                download_counts[matched_category] += 1
+                print(
+                    f"Downloaded {matched_category} ({download_counts[matched_category]}/{target_limits[matched_category]})")
+            else:
+                print(f"API Error on spot {spot_id}: Status {response.status_code}")
 
-print("\n--- Pipeline Complete! ---")
-print("Final Dataset Distribution:")
-for category, count in download_counts.items():
-    print(f" - {category}: {count} images downloaded")
+            time.sleep(0.4)
+
+        except Exception as e:
+            print(f"Network Error on spot {spot_id}: {e}")
+
+
+    print("\n--- Pipeline Complete! ---")
+    print("Final Dataset Distribution:")
+    for category, count in download_counts.items():
+        print(f" - {category}: {count} images downloaded")

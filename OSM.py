@@ -1,101 +1,161 @@
+import json
+
 import osmium
 import csv
+
+# ==========================================
+# SPEED CONFIGURATION
+# ==========================================
+OSM_FILE = "great-britain-260515.osm.pbf"
+OUTPUT_CSV = "master_candidates.csv"
+
+# OPTIMIZATION: Converted lists to Sets {} for O(1) lightning-fast lookups
+BLACKLIST_BUILDING = {"house", "detached", "semidetached_house", "terrace", "apartments", "office", "retail", "hotel",
+                      "garages"}
+BLACKLIST_AEROWAY = {"runway", "taxiway", "helipad"}
+WALKABLE_HIGHWAYS = {"footway", "path", "cycleway", "pedestrian"}
+BRIDGE_TYPES = {"yes", "viaduct", "aqueduct", "boardwalk"}
+ABANDONED_TAGS = {"abandoned", "ruins", "collapsed"}
+NATURE_TAGS = {"cliff", "ridge", "bare_rock"}
+HISTORIC_TAGS = {"ruins", "castle", "fort"}
+PIER_TAGS = {"pier", "jetty"}
+TOWER_TAGS = {"water_tower", "chimney", "silo"}
+
 
 class DroneSpotMasterHandler(osmium.SimpleHandler):
     def __init__(self):
         super(DroneSpotMasterHandler, self).__init__()
         self.spots = []
 
-    def save_spot(self, osm_id, spot_type, lat, lon):
-        self.spots.append({
-            'id': osm_id,
-            'type': spot_type,
-            'lat': lat,
-            'lon': lon
-        })
+    def save_spot(self, osm_id, spot_type, lat, lon,data):
+        self.spots.append({'id': osm_id, 'type': spot_type, 'lat': lat, 'lon': lon,'data': json.dumps(dict(data))})
 
-    # HANDLES NODES (Single points on the map)
     def node(self, n):
-        # 1. Mountain Peaks
-        if 'natural' in n.tags and n.tags['natural'] == 'peak':
-            name = n.tags.get('name', 'Unnamed Peak')
-            self.save_spot(n.id, f"Mountain Peak ({name})", n.location.lat, n.location.lon)
-            return
+        natural = n.tags.get('natural')
+        man_made = n.tags.get('man_made')
 
-        # 2. Industrial Towers, Chimneys, and Silos
-        if 'man_made' in n.tags and n.tags['man_made'] in ['water_tower', 'chimney', 'silo']:
-            self.save_spot(n.id, f"Tower ({n.tags['man_made']})", n.location.lat, n.location.lon)
-            return
+        if natural == 'peak':
+            self.save_spot(n.id, "Mountain Peak", n.location.lat, n.location.lon,n.tags)
+        elif man_made in TOWER_TAGS:
+            self.save_spot(n.id, "Tower", n.location.lat, n.location.lon,n.tags)
+        elif n.tags.get('tourism') == 'artwork' and n.tags.get('artwork_type') in ['graffiti', 'street_art']:
+            self.save_spot(n.id, "Urban Graffiti Spot", n.location.lat, n.location.lon,n.tags)
 
-    # HANDLES WAYS (Lines, boundaries, and structures)
     def way(self, w):
-        # Geolocation safety check for lines/polygons
         try:
-            first_node = w.nodes[0]
-            lat, lon = first_node.lat, first_node.lon
+            # Grab coordinates first. If it fails, bail immediately.
+            lat, lon = w.nodes[0].lat, w.nodes[0].lon
         except osmium.InvalidLocationError:
             return
+        building = w.tags.get('building')
+        bridge = w.tags.get('bridge')
+        highway = w.tags.get('highway')
+        landuse = w.tags.get('landuse')
+        railway = w.tags.get('railway')
 
-        # 1. Walkable Bridges
-        if 'bridge' in w.tags and w.tags['bridge'] == 'yes':
-            if 'highway' in w.tags and w.tags['highway'] in ['footway', 'path', 'cycleway']:
-                self.save_spot(w.id, "Walkable Bridge", lat, lon)
+        # --- FAST ABANDONED CHECK ---
+        is_abandoned = False
+        if building in ABANDONED_TAGS or w.tags.get('abandoned') == 'yes' or w.tags.get('disused') == 'yes':
+            is_abandoned = True
+
+        # --- FAST BLACKLIST CHECK ---
+        if not is_abandoned:
+            if building in BLACKLIST_BUILDING or w.tags.get('aeroway') in BLACKLIST_AEROWAY:
                 return
 
-        # 2. Bandos / Abandoned Industrial Sites
-        is_bando = False
-        if 'building' in w.tags and w.tags['building'] in ['abandoned', 'ruins', 'collapsed']:
-            is_bando = True
-        for tag in w.tags:
-            if tag.k.startswith('abandoned:') or tag.k.startswith('disused:'):
-                is_bando = True
-                break
-        if 'building' in w.tags and w.tags['building'] in ['industrial', 'warehouse', 'manufactory']:
-            if 'abandoned' in w.tags and w.tags['abandoned'] == 'yes':
-                is_bando = True
-            elif 'disused' in w.tags and w.tags['disused'] == 'yes':
-                is_bando = True
-        if is_bando:
-            self.save_spot(w.id, "Abandoned Industrial", lat, lon)
+        # 1. Walkable Bridges
+        if bridge in BRIDGE_TYPES and highway in WALKABLE_HIGHWAYS:
+            self.save_spot(w.id, "Walkable Bridge", lat, lon,w.tags)
             return
 
-        # 3. Cliffs, Ridges, and Massive Rock Formations
-        if 'natural' in w.tags and w.tags['natural'] in ['cliff', 'ridge', 'bare_rock']:
-            feature_name = w.tags.get('name', w.tags['natural'].capitalize())
-            self.save_spot(w.id, f"Terrain ({feature_name})", lat, lon)
+        # 2. Bandos / Abandoned Sites
+        if is_abandoned:
+            self.save_spot(w.id, "Abandoned Urban/Industrial", lat, lon,w.tags)
             return
 
-        # 4. Historic Ruins, Castles, and Forts
-        if 'historic' in w.tags and w.tags['historic'] in ['ruins', 'castle', 'fort']:
-            self.save_spot(w.id, "Historic Ruins", lat, lon)
+        # 3. Disused Railways
+        if railway in ['abandoned', 'disused']:
+            #self.save_spot(w.id, "Abandoned Railway", lat, lon,w.tags)
             return
 
-        # 5. Skateparks & BMX Tracks (Micro playgrounds)
-        if ('leisure' in w.tags and w.tags['leisure'] == 'skatepark') or ('sport' in w.tags and w.tags['sport'] == 'bmx'):
-            self.save_spot(w.id, "Skatepark / BMX Track", lat, lon)
+        # 4. Urban Brownfields
+        if landuse == 'brownfield':
+            self.save_spot(w.id, "Urban Brownfield", lat, lon,w.tags)
             return
 
-        # 6. Concrete Piers and Jetties
-        if 'man_made' in w.tags and w.tags['man_made'] in ['pier', 'jetty']:
-            self.save_spot(w.id, "Water Pier", lat, lon)
+        # 5. Cliffs & Terrain
+        if w.tags.get('natural') in NATURE_TAGS:
+            self.save_spot(w.id, "Terrain", lat, lon,w.tags)
             return
 
-        # 7. WWII Bunkers & Pillboxes
-        if 'military' in w.tags and w.tags['military'] == 'bunker':
-            self.save_spot(w.id, "Military Bunker", lat, lon)
+        # 6. Historic Ruins
+        if w.tags.get('historic') in HISTORIC_TAGS:
+            self.save_spot(w.id, "Historic Ruins", lat, lon,w.tags)
             return
 
-# --- EXECUTION PIPELINE ---
-handler = DroneSpotMasterHandler()
+        # 7. Skateparks & Parkour
+        leisure = w.tags.get('leisure')
+        if leisure in ['skatepark', 'parkour'] or w.tags.get('sport') == 'bmx':
+            self.save_spot(w.id, "Urban Action Park", lat, lon,w.tags)
+            return
 
-print("Scanning OSM file... This may take a minute for large regions.")
-# 'locations=True' is absolutely mandatory to decode coordinates for ways
-handler.apply_file("great-britain-260515.osm.pbf", locations=True)
+        # 8. Piers & Bunkers
+        if w.tags.get('man_made') in PIER_TAGS:
+            self.save_spot(w.id, "Water Pier", lat, lon,w.tags)
+            return
+        if w.tags.get('military') == 'bunker':
+            self.save_spot(w.id, "Military Bunker", lat, lon,w.tags)
+            return
 
-# Write results directly to your dataset CSV
-with open('master_candidates.csv', 'w', newline='', encoding='utf-8') as f:
-    writer = csv.DictWriter(f, fieldnames=['id', 'type', 'lat', 'lon'])
-    writer.writeheader()
-    writer.writerows(handler.spots)
 
-print(f"Success! Found {len(handler.spots)} diverse drone spots and saved to master_candidates.csv")
+import subprocess
+import os
+
+if __name__ == "__main__":
+
+    TEMP_FILE = "temp_fpv_spots.osm.pbf"
+
+    print("Executing multithreaded C++ pre-filter (this will be fast)...")
+
+    filter_command = [
+        "osmium", "tags-filter", OSM_FILE,
+        "nwr/bridge=yes,viaduct,aqueduct,boardwalk",
+        "nwr/building=abandoned,ruins,collapsed",
+        "nwr/abandoned=yes",
+        "nwr/disused=yes",
+        "nwr/railway=abandoned,disused",
+        "nwr/landuse=brownfield",
+        "nwr/tourism=artwork",
+        "nwr/leisure=skatepark,parkour",
+        "nwr/sport=bmx",
+        "nwr/natural=peak,cliff,ridge,bare_rock",
+        "nwr/historic=ruins,castle,fort",
+        "nwr/man_made=water_tower,chimney,silo,pier,jetty",
+        "nwr/military=bunker",
+        "-o", TEMP_FILE,
+        "--overwrite"
+    ]
+
+    # Run the C++ tool directly from Python
+    subprocess.run(filter_command, check=True)
+    print(f"Pre-filter complete! Created lightweight map: {TEMP_FILE}")
+
+    # 2. THE PYTHON PARSER
+    # Now we run your exact Python logic, but it only has to look at a few thousand objects
+    # instead of 100 million.
+    handler = DroneSpotMasterHandler()
+    print("Running Python logic on the filtered data...")
+    handler.apply_file(TEMP_FILE, locations=True, idx='flex_mem')
+
+    # 3. SAVE AND CLEANUP
+    print(f"Writing {len(handler.spots)} premium spots to {OUTPUT_CSV}...")
+    with open(OUTPUT_CSV, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=['id', 'type', 'lat', 'lon','data'])
+        writer.writeheader()
+        writer.writerows(handler.spots)
+
+    # Delete the temporary file to keep your folder clean
+    if os.path.exists(TEMP_FILE):
+        os.remove(TEMP_FILE)
+
+    print("Done! Execution finished in record time.")

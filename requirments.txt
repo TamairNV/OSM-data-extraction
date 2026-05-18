@@ -7,3 +7,4 @@ requests
 torch
 pillow
 torchvision
+geopandas
