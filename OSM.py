@@ -21,6 +21,21 @@ HISTORIC_TAGS = {"ruins", "castle", "fort"}
 PIER_TAGS = {"pier", "jetty"}
 TOWER_TAGS = {"water_tower", "chimney", "silo"}
 
+import numpy as np
+
+
+def haversine_np(lon1, lat1, lon2, lat2):
+    lon1, lat1, lon2, lat2 = map(np.radians, [lon1, lat1, lon2, lat2])
+
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+
+    a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
+    c = 2 * np.arcsin(np.sqrt(a))
+
+    meters = 6367000 * c
+    return meters
+
 
 class DroneSpotMasterHandler(osmium.SimpleHandler):
     def __init__(self):
@@ -42,9 +57,17 @@ class DroneSpotMasterHandler(osmium.SimpleHandler):
             self.save_spot(n.id, "Urban Graffiti Spot", n.location.lat, n.location.lon,n.tags)
 
     def way(self, w):
+
         try:
             # Grab coordinates first. If it fails, bail immediately.
             lat, lon = w.nodes[0].lat, w.nodes[0].lon
+            l = len(w.nodes)-1
+            lat2, lon2 = w.nodes[l].lat, w.nodes[l].lon
+            length = haversine_np(lon, lat, lon2, lat2)
+            
+            if length <= 2.5:
+                return
+
         except osmium.InvalidLocationError:
             return
         building = w.tags.get('building')
@@ -157,5 +180,4 @@ if __name__ == "__main__":
     # Delete the temporary file to keep your folder clean
     if os.path.exists(TEMP_FILE):
         os.remove(TEMP_FILE)
-
     print("Done! Execution finished in record time.")

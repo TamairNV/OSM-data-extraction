@@ -1,34 +1,44 @@
 import csv
 import math
 
-import pandas as pd
-import time
-import os
-import requests
-import dotenv
-
-import geopandas as gpd
-from shapely.geometry import Point
 
 from getAirSpaceData import fetch_drone_safe_airspaces
 
 
+
+
+
+
 def get_1km_bucket(lat, lon):
-    # Divide by the degree-to-kilometer ratio
     lat_bucket = int(lat / 0.009)
     lon_bucket = int(lon / 0.015)
 
-    # Returns a unique string key like "5922_231"
+    return f"{lat_bucket}_{lon_bucket}"
+
+def get_2km_bucket(lat, lon):
+    lat_bucket = math.floor(float(lat) / 0.018)
+    lon_bucket = math.floor(float(lon) / 0.030)
+
     return f"{lat_bucket}_{lon_bucket}"
 
 
+
 def get_200m_bucket(lat, lon):
-    # Use math.floor to prevent the Prime Meridian overlapping bug!
     lat_bucket = math.floor(float(lat) / 0.0018)
     lon_bucket = math.floor(float(lon) / 0.003)
     return f"{lat_bucket}_{lon_bucket}"
 
+def get_500m_bucket(lat, lon):
+    lat_bucket = math.floor(float(lat) / 0.0045)
+    lon_bucket = math.floor(float(lon) / 0.0075)
     return f"{lat_bucket}_{lon_bucket}"
+
+def get_333m_bucket(lat, lon):
+    lat_bucket = math.floor(float(lat) / 0.0027)
+    lon_bucket = math.floor(float(lon) / 0.0045)
+    return f"{lat_bucket}_{lon_bucket}"
+
+
 
 import pandas as pd
 import geopandas as gpd
@@ -88,7 +98,7 @@ class Reducers:
         if spot['type'] in premium_spots:
             return True
 
-        spot_key = get_1km_bucket(spot['lat'], spot['lon'])
+        spot_key = get_333m_bucket(spot['lat'], spot['lon'])
 
         if spot_key not in self.new_spot_map:
             self.new_spot_map[spot_key] = 1
@@ -96,7 +106,7 @@ class Reducers:
         else:
             self.new_spot_map[spot_key] += 1
 
-            if self.new_spot_map[spot_key] > 2:
+            if self.new_spot_map[spot_key] >= 2:
                 self.proximity_reduced += 1
                 return False
             else:
@@ -139,7 +149,7 @@ class Reducers:
 if __name__ == "__main__":
     reducer = Reducers("master_candidates.csv")
 
-    reducer.reducer_spots(keep_tags=False)
+    reducer.reducer_spots(keep_tags=True)
     print(f"Spots Reduced from air space {reducer.air_space_reduced}")
     print(f"Spots Reduced from proximity {reducer.proximity_reduced}")
 

@@ -8,3 +8,4 @@ torch
 pillow
 torchvision
 geopandas
+torchgeo
