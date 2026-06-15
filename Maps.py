@@ -53,8 +53,6 @@ if __name__ == "__main__":
         lat = row['lat']
         lon = row['lon']
 
-        # Figure out which target bucket this row fits into using partial string matching
-        # (This handles dynamic names like 'Mountain Peak (Ben Nevis)')
         matched_category = None
         for category in target_limits.keys():
             if row_type.startswith(category):
@@ -69,15 +67,14 @@ if __name__ == "__main__":
         if download_counts[matched_category] >= target_limits[matched_category]:
             continue
 
-        # --- API Request Setup ---
         url = "https://snapshot.apple-mapkit.com/api/v1/snapshot"
         chosen_zoom = category_zooms.get(matched_category, 18)
 
         params = {
             "center": f"{lat},{lon}",
-            "z": chosen_zoom,  # Uses the dynamic zoom level
-            "size": "600x600",  # Generates a much bigger, clearer image for your eyes
-            "scale": 2,  # Keeps it high-res for Retina displays
+            "z": chosen_zoom,
+            "size": "600x600",
+            "scale": 2,
             "t": "satellite",
             "token": APPLE_MAPS_TOKEN
         }

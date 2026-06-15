@@ -3,13 +3,9 @@ import json
 import osmium
 import csv
 
-# ==========================================
-# SPEED CONFIGURATION
-# ==========================================
 OSM_FILE = "great-britain-260515.osm.pbf"
 OUTPUT_CSV = "master_candidates.csv"
 
-# OPTIMIZATION: Converted lists to Sets {} for O(1) lightning-fast lookups
 BLACKLIST_BUILDING = {"house", "detached", "semidetached_house", "terrace", "apartments", "office", "retail", "hotel",
                       "garages"}
 BLACKLIST_AEROWAY = {"runway", "taxiway", "helipad"}
@@ -76,12 +72,12 @@ class DroneSpotMasterHandler(osmium.SimpleHandler):
         landuse = w.tags.get('landuse')
         railway = w.tags.get('railway')
 
-        # --- FAST ABANDONED CHECK ---
+        # --- ABANDONED CHECK ---
         is_abandoned = False
         if building in ABANDONED_TAGS or w.tags.get('abandoned') == 'yes' or w.tags.get('disused') == 'yes':
             is_abandoned = True
 
-        # --- FAST BLACKLIST CHECK ---
+        # --- BLACKLIST CHECK ---
         if not is_abandoned:
             if building in BLACKLIST_BUILDING or w.tags.get('aeroway') in BLACKLIST_AEROWAY:
                 return
