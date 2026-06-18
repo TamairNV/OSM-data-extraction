@@ -9,10 +9,10 @@ from PIL import Image
 
 from Maps import category_zooms, target_limits, APPLE_MAPS_TOKEN
 
-file_path = "../master_candidates_reduced.csv"
+file_path = "balenced5000.csv"
 TRACKER_FILE = "processed_ids.txt"
 DAILY_LIMIT = 24900
-MAX_WORKERS = 10
+MAX_WORKERS = 20
 
 counter_lock = threading.Lock()
 download_counts = 0
@@ -23,13 +23,12 @@ def download_image(row):
     lat, lon, row_type, spot_id = row['lat'], row['lon'], row['type'], row['id']
 
     matched_cat = next((cat for cat in target_limits.keys() if row_type.startswith(cat)), None)
-    if not matched_cat:
-        return
+
 
     url = "https://snapshot.apple-mapkit.com/api/v1/snapshot"
     params = {
         "center": f"{lat},{lon}",
-        "z": category_zooms.get(matched_cat, 18),
+        "z": category_zooms.get(matched_cat, 15),
         "size": "448x448",
         "scale": 2,
         "t": "satellite",
@@ -41,7 +40,7 @@ def download_image(row):
         if response.status_code == 200:
             # Ensure directory exists
             os.makedirs("images", exist_ok=True)
-            image_path = f"new_images/spot_{spot_id}.jpeg"
+            image_path = f"new_images_2/spot_{spot_id}.jpeg"
             image = Image.open(io.BytesIO(response.content)).convert("RGB")
             image.save(image_path, "JPEG", quality=85)
 
@@ -83,7 +82,6 @@ if __name__ == "__main__":
 
     df_today = df_remaining.head(DAILY_LIMIT)
     print(f"Queuing {len(df_today)} spots for this run.")
-
     try:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             list(executor.map(download_image, [row for _, row in df_today.iterrows()]))
