@@ -11,20 +11,22 @@ validation = json.load(open('validation_dataSet.json'))
 # 1. Safely target Apple Silicon
 device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
 print(f"Training on device: {device}")
-
+from peft import PeftModel
 # 2. Native Apple Silicon Load (No bitsandbytes!)
 print("Loading base model in native bfloat16...")
-model = Qwen2VLForConditionalGeneration.from_pretrained(
+base_model = Qwen2VLForConditionalGeneration.from_pretrained(
     'Qwen/Qwen2-VL-2B-Instruct',
-    torch_dtype=torch.bfloat16,  # Apple Silicon loves bfloat16
-)
-model = model.to(device)
+    torch_dtype=torch.bfloat16,
+).to(device)
+
+model = PeftModel.from_pretrained(base_model, 'fpv_model', is_trainable=True)
 
 # 3. Enable Gradient Checkpointing (Saves ~60% VRAM during training)
 model.gradient_checkpointing_enable()
 
 processor = AutoProcessor.from_pretrained('Qwen/Qwen2-VL-2B-Instruct')
 
+"""
 peft_config = LoraConfig(
     r=16,
     lora_alpha=32,
@@ -33,16 +35,16 @@ peft_config = LoraConfig(
     bias='none',
     task_type='CAUSAL_LM'
 )
+"""
 
-model = get_peft_model(model, peft_config)
-
-# 4. Standard Mac Optimizer (No 8-bit optimizer here)
+model.train()
 optimizer = torch.optim.AdamW(model.parameters(), lr=2e-4)
 
 print("Starting Training...")
 model.train()
 
-EPOCHS = 1
+EPOCHS = 2
+ACCUMULATION_STEPS = 4
 
 for epoch in range(EPOCHS):
     total_loss = 0
@@ -71,16 +73,18 @@ for epoch in range(EPOCHS):
         inputs["labels"] = labels
 
         outputs = model(**inputs)
-        loss = outputs.loss
+        loss = outputs.loss/ ACCUMULATION_STEPS
 
         loss.backward()
-        optimizer.step()
-        optimizer.zero_grad()
+        if (idx + 1) % ACCUMULATION_STEPS == 0 or (idx + 1) == len(training):
+            optimizer.step()
+            optimizer.zero_grad()
 
-        total_loss += loss.item()
+
+        total_loss += (loss.item() * ACCUMULATION_STEPS)
 
         if idx % 50 == 0:
-            print(f"Epoch {epoch + 1} | Step {idx}/{len(training)} | Loss: {loss.item():.4f}")
+            print(f"Epoch {epoch + 1} | Step {idx}/{len(training)} | Loss: {(loss.item() * ACCUMULATION_STEPS):.4f}")
 
         # 6. Strict Mac VRAM Cleanup
         del loss, outputs, inputs, labels, prompt_inputs
